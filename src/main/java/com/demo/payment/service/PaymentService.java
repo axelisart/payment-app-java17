@@ -21,7 +21,8 @@ import java.util.Random;
 public class PaymentService {
 
     private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
-    private static final Random RANDOM = new Random();
+    // non-final to allow injection in tests (Java 17 blocks reflection on static final fields)
+    static Random RANDOM = new Random();
     private static final DateTimeFormatter EXPIRY_FMT = DateTimeFormatter.ofPattern("MM/yy");
 
     // Phase 2: mutable HashMap + static{} block → Map.of() (immutable, one declaration)
