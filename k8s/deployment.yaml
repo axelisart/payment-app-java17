@@ -1,0 +1,144 @@
+# ── Namespace ─────────────────────────────────────────────────────────────────
+# Deploy to: ${NAMESPACE}
+# Image:     image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/payment-app:${IMAGE_TAG}
+#
+# Inject at deploy time:
+#   oc process -f deployment.yaml \
+#     -p NAMESPACE=my-project \
+#     -p IMAGE_TAG=v1.0.0 \
+#   | oc apply -f -
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: List
+items:
+
+# ── Deployment ────────────────────────────────────────────────────────────────
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: payment-app
+    namespace: ${NAMESPACE}
+    labels:
+      app: payment-app
+      app.kubernetes.io/name: payment-app
+      app.kubernetes.io/version: ${IMAGE_TAG}
+  spec:
+    replicas: 3
+    selector:
+      matchLabels:
+        app: payment-app
+    strategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxUnavailable: 1
+        maxSurge: 1
+    template:
+      metadata:
+        labels:
+          app: payment-app
+          app.kubernetes.io/name: payment-app
+        annotations:
+          prometheus.io/scrape: "true"
+          prometheus.io/path:   "/actuator/prometheus"
+          prometheus.io/port:   "8080"
+      spec:
+        # Drop all Linux capabilities; run as non-root
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          fsGroup:   65532
+        containers:
+        - name: payment-app
+          image: image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/payment-app:${IMAGE_TAG}
+          imagePullPolicy: Always
+          ports:
+          - containerPort: 8080
+            name: http
+            protocol: TCP
+          env:
+          - name: SPRING_PROFILES_ACTIVE
+            value: "prod"
+          - name: JAVA_OPTS
+            value: "-Xms256m -Xmx512m -Djava.security.egd=file:/dev/./urandom"
+          resources:
+            requests:
+              cpu:    "250m"
+              memory: "512Mi"
+            limits:
+              cpu:    "500m"
+              memory: "768Mi"
+          # ── Probes ──────────────────────────────────────────────────────
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds:       10
+            failureThreshold:    3
+            successThreshold:    1
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds:       20
+            failureThreshold:    3
+          # ── Security context ────────────────────────────────────────────
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem:   false   # H2 needs tmp write access
+            capabilities:
+              drop: ["ALL"]
+        terminationGracePeriodSeconds: 30
+
+# ── Service ───────────────────────────────────────────────────────────────────
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: payment-app
+    namespace: ${NAMESPACE}
+    labels:
+      app: payment-app
+  spec:
+    selector:
+      app: payment-app
+    ports:
+    - name: http
+      port:       8080
+      targetPort: 8080
+      protocol:   TCP
+    type: ClusterIP
+
+# ── Route (OpenShift) ─────────────────────────────────────────────────────────
+- apiVersion: route.openshift.io/v1
+  kind: Route
+  metadata:
+    name: payment-app
+    namespace: ${NAMESPACE}
+    labels:
+      app: payment-app
+  spec:
+    to:
+      kind:   Service
+      name:   payment-app
+      weight: 100
+    port:
+      targetPort: http
+    tls:
+      termination:           edge
+      insecureEdgeTerminationPolicy: Redirect
+    wildcardPolicy: None
+
+# ── PodDisruptionBudget ───────────────────────────────────────────────────────
+- apiVersion: policy/v1
+  kind: PodDisruptionBudget
+  metadata:
+    name: payment-app-pdb
+    namespace: ${NAMESPACE}
+    labels:
+      app: payment-app
+  spec:
+    maxUnavailable: 1
+    selector:
+      matchLabels:
+        app: payment-app

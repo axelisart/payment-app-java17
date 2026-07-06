@@ -1,0 +1,75 @@
+---
+# ──────────────────────────────────────────────────────────────────────────────
+# roles/payment-app/tasks/main.yml
+#
+# Orchestrates all configuration tasks for one namespace pass.
+# Called once per namespace by playbook.yml (staging first, then prod).
+#
+# Execution order (mirrors IaCArchitecture.md Ansible layer):
+#
+#   1. serviceaccount  — verify Terraform-provisioned RBAC (read-only assertions)
+#   2. wait_postgres   — block until PostgreSQL pod + service are fully ready
+#   3. secret          — create/update postgres-credentials Secret
+#   4. configmap       — create/update payment-app-config ConfigMap
+#   5. preflight       — assert namespace is fully ready for CD deployment
+#
+# Tags allow individual stages to be re-run without executing the full playbook:
+#   ansible-playbook playbook.yml --tags secret           # rotate credentials only
+#   ansible-playbook playbook.yml --tags configmap        # push config change only
+#   ansible-playbook playbook.yml --tags preflight        # re-run health checks only
+#   ansible-playbook playbook.yml --tags verify           # RBAC assertions only
+# ──────────────────────────────────────────────────────────────────────────────
+
+- name: "{{ namespace }} | Display environment banner"
+  ansible.builtin.debug:
+    msg: |
+      ══════════════════════════════════════════════════════════════
+       Configuring namespace: {{ namespace }}  ({{ env_label }})
+      ══════════════════════════════════════════════════════════════
+
+# ── Stage 1: Verify Terraform-provisioned RBAC ────────────────────────────────
+# Read-only assertions — Ansible never mutates the ServiceAccount or Role.
+# Failure here means Terraform did not complete successfully.
+- name: "{{ namespace }} | Verify ServiceAccount and RBAC"
+  ansible.builtin.include_tasks:
+    file: serviceaccount.yml
+    apply:
+      tags: [verify, rbac]
+  tags: [verify, rbac, always]
+
+# ── Stage 2: Wait for PostgreSQL to be fully ready ────────────────────────────
+# This is the blocking gate described in IaCArchitecture.md:
+#   "wait_for postgres-service port 5432 ready"
+# All subsequent tasks depend on an available DB.
+- name: "{{ namespace }} | Wait for PostgreSQL readiness"
+  ansible.builtin.include_tasks:
+    file: wait_postgres.yml
+    apply:
+      tags: [wait, postgres]
+  tags: [wait, postgres]
+
+# ── Stage 3: Apply postgres-credentials Secret ────────────────────────────────
+- name: "{{ namespace }} | Apply postgres-credentials Secret"
+  ansible.builtin.include_tasks:
+    file: secret.yml
+    apply:
+      tags: [secret, credentials]
+  tags: [secret, credentials]
+
+# ── Stage 4: Apply payment-app-config ConfigMap ───────────────────────────────
+- name: "{{ namespace }} | Apply payment-app-config ConfigMap"
+  ansible.builtin.include_tasks:
+    file: configmap.yml
+    apply:
+      tags: [configmap, config]
+  tags: [configmap, config]
+
+# ── Stage 5: Pre-flight health check ─────────────────────────────────────────
+# Final gate before signalling the CD pipeline that this namespace is ready.
+# Asserts namespace state, all K8s resources, and (if pods exist) actuator UP.
+- name: "{{ namespace }} | Run pre-flight health check"
+  ansible.builtin.include_tasks:
+    file: preflight.yml
+    apply:
+      tags: [preflight, health]
+  tags: [preflight, health]

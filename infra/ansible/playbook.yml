@@ -1,0 +1,176 @@
+---
+# ──────────────────────────────────────────────────────────────────────────────
+# playbook.yml — Main Ansible playbook for payment-app OpenShift configuration
+#
+# Runs the payment-app role against:
+#   1. The staging namespace  (bob-demo-staging)
+#   2. The production namespace  (bob-demo-prod)
+#
+# Staging is always configured before production. The serial: 1 setting ensures
+# the plays run sequentially — prod never starts until staging has fully passed
+# all assertions and the pre-flight gate.
+#
+# ── Prerequisites ─────────────────────────────────────────────────────────────
+#   • Terraform apply has completed (namespaces, RBAC, NetworkPolicies,
+#     PostgreSQL Deployment and Service all exist)
+#   • Required collections are installed:
+#       ansible-galaxy collection install kubernetes.core
+#   • Cluster credentials are available in the environment:
+#       export K8S_AUTH_HOST="$(oc whoami --show-server)"
+#       export K8S_AUTH_API_KEY="$(oc whoami -t)"
+#   • Vault password available if using encrypted credentials:
+#       export ANSIBLE_VAULT_PASSWORD_FILE=~/.vault_pass
+#
+# ── Usage ──────────────────────────────────────────────────────────────────────
+#
+#   # Full run (staging then prod):
+#   ansible-playbook -i inventory/hosts.yml playbook.yml
+#
+#   # Staging only:
+#   ansible-playbook -i inventory/hosts.yml playbook.yml --limit staging
+#
+#   # Production only (after staging is confirmed):
+#   ansible-playbook -i inventory/hosts.yml playbook.yml --limit prod
+#
+#   # Rotate credentials in staging only:
+#   ansible-playbook -i inventory/hosts.yml playbook.yml \
+#     --limit staging --tags secret \
+#     --extra-vars "db_password=<new-value>"
+#
+#   # Re-run pre-flight checks without making any changes:
+#   ansible-playbook -i inventory/hosts.yml playbook.yml \
+#     --tags preflight --check
+#
+#   # Dry-run (check mode — no changes applied):
+#   ansible-playbook -i inventory/hosts.yml playbook.yml --check --diff
+#
+# ── Vault usage ────────────────────────────────────────────────────────────────
+#   Encrypt staging credentials:
+#     ansible-vault encrypt_string 'my-staging-password' \
+#       --name 'vault_db_password_staging'
+#
+#   Store encrypted values in:
+#     group_vars/staging/vault.yml  (for staging)
+#     group_vars/prod/vault.yml     (for production)
+#
+#   These files are automatically loaded from the inventory group_vars directory.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ════════════════════════════════════════════════════════════════════════════
+# PLAY 1 — Configure bob-demo-staging
+# ════════════════════════════════════════════════════════════════════════════
+- name: "Configure bob-demo-staging namespace"
+  hosts: staging
+  gather_facts: false
+
+  # No SSH — all tasks use kubernetes.core modules talking to the API server.
+  connection: local
+
+  # Abort this play (and prevent the prod play from starting) if any task fails.
+  any_errors_fatal: true
+
+  # Pre-play environment check: confirm cluster credentials are available.
+  pre_tasks:
+    - name: "staging | Assert K8S_AUTH_HOST environment variable is set"
+      ansible.builtin.assert:
+        that:
+          - lookup('env', 'K8S_AUTH_HOST') | length > 0
+        fail_msg: >-
+          K8S_AUTH_HOST environment variable is not set.
+          Run: export K8S_AUTH_HOST="$(oc whoami --show-server)"
+        success_msg: "K8S_AUTH_HOST is set ✔"
+
+    - name: "staging | Assert K8S_AUTH_API_KEY environment variable is set"
+      ansible.builtin.assert:
+        that:
+          - lookup('env', 'K8S_AUTH_API_KEY') | length > 0
+        fail_msg: >-
+          K8S_AUTH_API_KEY environment variable is not set.
+          Run: export K8S_AUTH_API_KEY="$(oc whoami -t)"
+        success_msg: "K8S_AUTH_API_KEY is set ✔"
+
+    - name: "staging | Assert db_password is not a placeholder"
+      ansible.builtin.assert:
+        that:
+          - db_password is defined
+          - db_password | length > 0
+          - not db_password.startswith('PLACEHOLDER')
+        fail_msg: >-
+          db_password for staging contains a placeholder value.
+          Supply a real password via Ansible Vault or --extra-vars.
+        success_msg: "db_password for staging is set ✔"
+      no_log: true
+
+  roles:
+    - role: payment-app
+
+  post_tasks:
+    - name: "staging | ✔ Staging configuration complete"
+      ansible.builtin.debug:
+        msg: |
+          ══════════════════════════════════════════════════════════════
+           STAGING CONFIGURATION COMPLETE
+           Namespace : bob-demo-staging
+           Secret    : postgres-credentials ✔
+           ConfigMap : payment-app-config ✔
+           Pre-flight: PASSED ✔
+          ══════════════════════════════════════════════════════════════
+           The CD pipeline may now deploy to bob-demo-staging.
+          ══════════════════════════════════════════════════════════════
+
+# ════════════════════════════════════════════════════════════════════════════
+# PLAY 2 — Configure bob-demo-prod
+# ════════════════════════════════════════════════════════════════════════════
+# This play only starts if Play 1 (staging) completed without errors.
+# serial: 1 is set at the inventory level (single host), but any_errors_fatal
+# on Play 1 ensures prod is never reached if staging failed.
+- name: "Configure bob-demo-prod namespace"
+  hosts: prod
+  gather_facts: false
+  connection: local
+  any_errors_fatal: true
+
+  pre_tasks:
+    - name: "prod | Assert K8S_AUTH_HOST environment variable is set"
+      ansible.builtin.assert:
+        that:
+          - lookup('env', 'K8S_AUTH_HOST') | length > 0
+        fail_msg: "K8S_AUTH_HOST is not set. Run: export K8S_AUTH_HOST=\"$(oc whoami --show-server)\""
+        success_msg: "K8S_AUTH_HOST is set ✔"
+
+    - name: "prod | Assert K8S_AUTH_API_KEY environment variable is set"
+      ansible.builtin.assert:
+        that:
+          - lookup('env', 'K8S_AUTH_API_KEY') | length > 0
+        fail_msg: "K8S_AUTH_API_KEY is not set. Run: export K8S_AUTH_API_KEY=\"$(oc whoami -t)\""
+        success_msg: "K8S_AUTH_API_KEY is set ✔"
+
+    - name: "prod | Assert db_password is not a placeholder"
+      ansible.builtin.assert:
+        that:
+          - db_password is defined
+          - db_password | length > 0
+          - not db_password.startswith('PLACEHOLDER')
+        fail_msg: >-
+          db_password for prod contains a placeholder value.
+          Supply a real password via Ansible Vault or --extra-vars.
+        success_msg: "db_password for prod is set ✔"
+      no_log: true
+
+  roles:
+    - role: payment-app
+
+  post_tasks:
+    - name: "prod | ✔ Production configuration complete"
+      ansible.builtin.debug:
+        msg: |
+          ══════════════════════════════════════════════════════════════
+           PRODUCTION CONFIGURATION COMPLETE
+           Namespace : bob-demo-prod
+           Secret    : postgres-credentials ✔
+           ConfigMap : payment-app-config ✔
+           Pre-flight: PASSED ✔
+          ══════════════════════════════════════════════════════════════
+           The CD pipeline (with manual approval gate) may now deploy
+           to bob-demo-prod.
+          ══════════════════════════════════════════════════════════════

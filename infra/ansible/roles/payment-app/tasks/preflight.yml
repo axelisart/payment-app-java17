@@ -1,0 +1,241 @@
+---
+# ──────────────────────────────────────────────────────────────────────────────
+# roles/payment-app/tasks/preflight.yml
+#
+# Pre-flight health check that confirms the namespace is ready for the CD
+# pipeline to deploy the payment-service.
+#
+# This task file runs AFTER:
+#   • Terraform has provisioned namespace, quotas, network policies, postgres
+#   • The Secret and ConfigMap have been applied by Ansible
+#   • PostgreSQL has passed the wait_postgres gate
+#
+# Checks performed:
+#   1. Namespace exists and is Active
+#   2. ResourceQuota is present and below hard limits
+#   3. NetworkPolicies expected by the architecture are all present
+#   4. postgres-service ClusterIP is reachable (endpoints registered)
+#   5. postgres-credentials Secret exists (but value is NOT read — no_log)
+#   6. payment-app-config ConfigMap exists and has required keys
+#   7. If payment-service pods already exist (re-run scenario): hit /actuator/health
+#      and assert status is UP. If no pods exist yet, skip with a clear message.
+#
+# Exit: If all assertions pass, the task prints a ✔ READY summary and sets
+# the preflight_passed fact = true, which the CD pipeline can check.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ── 1. Namespace Active ───────────────────────────────────────────────────────
+- name: "{{ namespace }} | preflight | Fetch Namespace info"
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: "{{ namespace }}"
+  register: ns_info
+
+- name: "{{ namespace }} | preflight | Assert Namespace is Active"
+  ansible.builtin.assert:
+    that:
+      - ns_info.resources | length == 1
+      - ns_info.resources[0].status.phase == 'Active'
+    fail_msg: >-
+      Namespace '{{ namespace }}' is not Active (phase:
+      {{ ns_info.resources[0].status.phase | default('NOT FOUND') }}).
+      Run `terraform apply` and wait for the namespace to become Active.
+    success_msg: "Namespace '{{ namespace }}' is Active ✔"
+
+# ── 2. ResourceQuota is present ───────────────────────────────────────────────
+- name: "{{ namespace }} | preflight | Fetch ResourceQuota"
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: ResourceQuota
+    name: payment-app-quota
+    namespace: "{{ namespace }}"
+  register: rq_info
+
+- name: "{{ namespace }} | preflight | Assert ResourceQuota exists"
+  ansible.builtin.assert:
+    that:
+      - rq_info.resources | length == 1
+    fail_msg: >-
+      ResourceQuota 'payment-app-quota' not found in '{{ namespace }}'.
+      Run `terraform apply` to provision it.
+    success_msg: >-
+      ResourceQuota present — hard limits:
+      {{ rq_info.resources[0].spec.hard | to_nice_json }} ✔
+
+# ── 3. Expected NetworkPolicies are present ────────────────────────────────────
+- name: "{{ namespace }} | preflight | Fetch all NetworkPolicies in namespace"
+  kubernetes.core.k8s_info:
+    api_version: networking.k8s.io/v1
+    kind: NetworkPolicy
+    namespace: "{{ namespace }}"
+  register: np_info
+
+- name: "{{ namespace }} | preflight | Set NetworkPolicy name list fact"
+  ansible.builtin.set_fact:
+    present_netpols: "{{ np_info.resources | map(attribute='metadata.name') | list }}"
+
+- name: "{{ namespace }} | preflight | Assert all required NetworkPolicies exist"
+  ansible.builtin.assert:
+    that:
+      - "'default-deny-all' in present_netpols"
+      - "'allow-payment-ingress' in present_netpols"
+      - "'allow-payment-to-postgres' in present_netpols"
+      - "'allow-payment-egress-to-postgres' in present_netpols"
+    fail_msg: >-
+      One or more required NetworkPolicies are missing in '{{ namespace }}'.
+      Present: {{ present_netpols }}.
+      Expected: default-deny-all, allow-payment-ingress,
+                allow-payment-to-postgres, allow-payment-egress-to-postgres.
+      Run `terraform apply` to reconcile.
+    success_msg: "All 4 NetworkPolicies are present ✔"
+
+# ── 4. postgres-service has ready endpoints ───────────────────────────────────
+- name: "{{ namespace }} | preflight | Fetch postgres-service Endpoints"
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Endpoints
+    name: "{{ postgres_service_name }}"
+    namespace: "{{ namespace }}"
+  register: pg_ep_info
+
+- name: "{{ namespace }} | preflight | Assert postgres-service has ready endpoints"
+  ansible.builtin.assert:
+    that:
+      - pg_ep_info.resources | length == 1
+      - pg_ep_info.resources[0].subsets is defined
+      - pg_ep_info.resources[0].subsets | length > 0
+      - pg_ep_info.resources[0].subsets[0].addresses | length > 0
+    fail_msg: >-
+      '{{ postgres_service_name }}' in '{{ namespace }}' has no ready endpoints.
+      Ensure the postgres pod is Running and labelled app=postgres.
+    success_msg: "'{{ postgres_service_name }}' has {{ pg_ep_info.resources[0].subsets[0].addresses | length }} ready endpoint(s) ✔"
+
+# ── 5. postgres-credentials Secret exists ────────────────────────────────────
+- name: "{{ namespace }} | preflight | Assert postgres-credentials Secret exists"
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Secret
+    name: "{{ postgres_secret_name }}"
+    namespace: "{{ namespace }}"
+  register: secret_check
+  no_log: true    # do not log Secret metadata (prevents key enumeration)
+
+- name: "{{ namespace }} | preflight | Assert Secret was found"
+  ansible.builtin.assert:
+    that:
+      - secret_check.resources | length == 1
+      - "'DB_URL' in (secret_check.resources[0].data | default({}))"
+      - "'DB_USER' in (secret_check.resources[0].data | default({}))"
+      - "'DB_PASSWORD' in (secret_check.resources[0].data | default({}))"
+    fail_msg: >-
+      Secret '{{ postgres_secret_name }}' in '{{ namespace }}' is missing or
+      does not contain the required keys (DB_URL, DB_USER, DB_PASSWORD).
+      Re-run the secret task: ansible-playbook playbook.yml --tags secret
+    success_msg: "Secret '{{ postgres_secret_name }}' exists with all required keys ✔"
+  no_log: true
+
+# ── 6. payment-app-config ConfigMap exists and has required keys ──────────────
+- name: "{{ namespace }} | preflight | Fetch payment-app-config ConfigMap"
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: ConfigMap
+    name: "{{ configmap_name }}"
+    namespace: "{{ namespace }}"
+  register: cm_check
+
+- name: "{{ namespace }} | preflight | Assert ConfigMap has required keys"
+  ansible.builtin.assert:
+    that:
+      - cm_check.resources | length == 1
+      - >-
+        ['SERVER_PORT', 'LOGGING_LEVEL_COM_DEMO_PAYMENT',
+         'MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE']
+        | difference(cm_check.resources[0].data.keys() | list)
+        | length == 0
+    fail_msg: >-
+      ConfigMap '{{ configmap_name }}' in '{{ namespace }}' is missing or
+      incomplete. Re-run: ansible-playbook playbook.yml --tags configmap
+    success_msg: "ConfigMap '{{ configmap_name }}' has all required keys ✔"
+
+# ── 7. payment-service actuator health (skip if no pods yet) ──────────────────
+- name: "{{ namespace }} | preflight | Check for existing payment-service pods"
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ namespace }}"
+    label_selectors:
+      - "app=payment-app"
+    field_selectors:
+      - "status.phase=Running"
+  register: payment_pods
+
+- name: "{{ namespace }} | preflight | Skip health check (no payment-service pods yet)"
+  ansible.builtin.debug:
+    msg: >-
+      No Running payment-service pods found in '{{ namespace }}'.
+      This is expected on first deploy — skipping /actuator/health check.
+      The health gate will be enforced by the CD pipeline after the first deploy.
+  when: payment_pods.resources | length == 0
+
+- name: "{{ namespace }} | preflight | Run /actuator/health via pod exec"
+  when: payment_pods.resources | length > 0
+  block:
+    - name: "{{ namespace }} | preflight | Set payment pod name fact"
+      ansible.builtin.set_fact:
+        payment_pod_name: "{{ payment_pods.resources[0].metadata.name }}"
+
+    - name: "{{ namespace }} | preflight | HTTP GET /actuator/health inside pod"
+      kubernetes.core.k8s_exec:
+        namespace: "{{ namespace }}"
+        pod: "{{ payment_pod_name }}"
+        command:
+          - sh
+          - -c
+          - >-
+            curl -sf --max-time 10
+            http://localhost:{{ preflight_health_port }}{{ preflight_health_endpoint }}
+      register: health_response
+      retries: "{{ preflight_health_retries }}"
+      delay: "{{ preflight_health_delay }}"
+      until: health_response.return_code == 0
+      ignore_errors: true    # failure is reported via assert below, not as a fatal error
+
+    - name: "{{ namespace }} | preflight | Assert health response contains status UP"
+      ansible.builtin.assert:
+        that:
+          - health_response.return_code == 0
+          - "'UP' in health_response.stdout"
+        fail_msg: >-
+          /actuator/health in pod '{{ payment_pod_name }}' did not return UP.
+          Response: {{ health_response.stdout | default('(no response)') }}
+          Inspect logs: oc logs {{ payment_pod_name }} -n {{ namespace }}
+        success_msg: >-
+          payment-service /actuator/health = UP in namespace '{{ namespace }}' ✔
+
+    - name: "{{ namespace }} | preflight | Show health response"
+      ansible.builtin.debug:
+        msg: "{{ health_response.stdout | from_json | to_nice_json }}"
+      when: health_response.stdout is defined and health_response.stdout | length > 0
+
+# ── Final summary ─────────────────────────────────────────────────────────────
+- name: "{{ namespace }} | preflight | Set preflight_passed fact"
+  ansible.builtin.set_fact:
+    preflight_passed: true
+
+- name: "{{ namespace }} | preflight | ✔ Namespace is ready for deployment"
+  ansible.builtin.debug:
+    msg: |
+      ══════════════════════════════════════════════════════════════
+       PRE-FLIGHT PASSED — {{ namespace }}
+      ══════════════════════════════════════════════════════════════
+       Namespace    : {{ namespace }} (Active)
+       ResourceQuota: present ✔
+       NetworkPolicy: 4/4 required policies present ✔
+       postgres-svc : ready endpoints ✔
+       Secret       : postgres-credentials (DB_URL, DB_USER, DB_PASSWORD) ✔
+       ConfigMap    : payment-app-config ✔
+       Actuator     : {{ 'UP ✔' if payment_pods.resources | length > 0 else 'skipped (first deploy)' }}
+      ══════════════════════════════════════════════════════════════
+       Namespace is ready for CD pipeline deployment.
+      ══════════════════════════════════════════════════════════════

@@ -1,0 +1,87 @@
+{# ─────────────────────────────────────────────────────────────────────────────
+   roles/payment-app/templates/payment-app-config.yml.j2
+
+   Kubernetes ConfigMap template for payment-service runtime configuration.
+
+   Rendered by roles/payment-app/tasks/configmap.yml using:
+     lookup('template', 'payment-app-config.yml.j2') | from_yaml
+
+   The ConfigMap is consumed by the payment-service Deployment via envFrom:
+     envFrom:
+       - configMapRef:
+           name: payment-app-config
+       - secretRef:
+           name: postgres-credentials
+
+   Key naming follows the Spring Boot relaxed binding convention. Environment
+   variables in UPPER_SNAKE_CASE are automatically mapped to dotted property
+   names (e.g. SERVER_PORT → server.port).
+
+   Non-sensitive configuration only. Credentials belong in the Secret.
+───────────────────────────────────────────────────────────────────────────── #}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ configmap_name }}
+  namespace: {{ namespace }}
+  labels:
+    app.kubernetes.io/managed-by: ansible
+    app.kubernetes.io/part-of: payment-app
+    app.kubernetes.io/component: config
+    app.kubernetes.io/environment: {{ env_label }}
+  annotations:
+    app.kubernetes.io/description: "Application configuration for payment-service (managed by Ansible)"
+    ansible/last-applied-by: "payment-app role"
+data:
+  # ── Server ─────────────────────────────────────────────────────────────────
+  # server.port
+  SERVER_PORT: "{{ app_port }}"
+
+  # ── Logging ────────────────────────────────────────────────────────────────
+  # logging.level.com.demo.payment
+  LOGGING_LEVEL_COM_DEMO_PAYMENT: "{{ app_log_level }}"
+  # Quieten framework noise in production; increase to DEBUG for troubleshooting.
+  LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_CACHE: "{{ 'DEBUG' if env_label == 'staging' else 'WARN' }}"
+
+  # ── Caffeine cache ─────────────────────────────────────────────────────────
+  # spring.cache.caffeine.spec
+  # maximumSize controls eviction when the cache is full.
+  # expireAfterWrite controls the TTL — matched to the 5-minute default in CacheConfig.java.
+  SPRING_CACHE_CAFFEINE_SPEC: "maximumSize={{ cache_max_size }},expireAfterWrite={{ cache_ttl_minutes }}m"
+
+  # ── Spring Data JPA / Hibernate ────────────────────────────────────────────
+  # spring.jpa.show-sql — always false in prod; safe to enable in staging for debug
+  SPRING_JPA_SHOW_SQL: "{{ 'true' if env_label == 'staging' else 'false' }}"
+  # spring.jpa.hibernate.ddl-auto
+  # 'validate' is the safe production default — schema must already exist.
+  # Use 'create-drop' in dev/test only.
+  SPRING_JPA_HIBERNATE_DDL_AUTO: "{{ jpa_ddl_auto }}"
+
+  # ── Spring datasource — connection pool ────────────────────────────────────
+  # The JDBC URL, username, and password come from the postgres-credentials
+  # Secret (envFrom secretRef) — not from this ConfigMap.
+  # HikariCP pool size tuned for a single-replica app in a resource-quota namespace.
+  SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "{{ '5' if env_label == 'staging' else '10' }}"
+  SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: "2"
+  SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT: "30000"
+  SPRING_DATASOURCE_HIKARI_IDLE_TIMEOUT: "600000"
+  SPRING_DATASOURCE_HIKARI_MAX_LIFETIME: "1800000"
+
+  # ── Actuator ───────────────────────────────────────────────────────────────
+  # management.endpoints.web.exposure.include
+  MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: "{{ actuator_endpoints }}"
+  # management.endpoint.health.show-details
+  # 'when-authorized' in prod; 'always' acceptable in staging for easier debugging.
+  MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS: "{{ 'always' if env_label == 'staging' else health_show_details }}"
+  # management.prometheus.metrics.export.enabled (Spring Boot 3.x property name)
+  MANAGEMENT_PROMETHEUS_METRICS_EXPORT_ENABLED: "{{ prometheus_metrics_enabled }}"
+
+  # ── Spring profile ─────────────────────────────────────────────────────────
+  # Activates the correct Spring profile for this environment.
+  # Maps to @Profile("staging") / @Profile("prod") annotations if used.
+  SPRING_PROFILES_ACTIVE: "{{ env_label }}"
+
+  # ── Environment label (for logging and observability) ──────────────────────
+  APP_ENVIRONMENT: "{{ env_label }}"
+  APP_NAMESPACE: "{{ namespace }}"

@@ -1,0 +1,97 @@
+---
+# ──────────────────────────────────────────────────────────────────────────────
+# roles/payment-app/defaults/main.yml
+#
+# Default variable values for the payment-app role.
+# These are the lowest-priority variable source in Ansible — every value here
+# can be overridden by group_vars, host_vars, inventory vars, or extra-vars.
+#
+# Variables marked PLACEHOLDER must be overridden with real values via:
+#   • Ansible Vault (recommended for production)
+#   • Environment variables exposed to the playbook via lookup('env', ...)
+#   • --extra-vars on the ansible-playbook command line
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ── Namespace (overridden per inventory group in hosts.yml) ───────────────────
+namespace: bob-demo-staging
+
+# ── Environment label (staging | prod) ───────────────────────────────────────
+env_label: staging
+
+# ── Resource names — must match Terraform-provisioned names exactly ───────────
+postgres_secret_name: postgres-credentials
+configmap_name: payment-app-config
+service_account_name: payment-service-sa
+postgres_service_name: postgres-service
+postgres_service_port: 5432
+postgres_deployment_name: postgres
+
+# ── PostgreSQL connection details ─────────────────────────────────────────────
+# db_url uses the in-namespace short DNS form. The FQDN form is:
+#   jdbc:postgresql://postgres-service.<namespace>.svc.cluster.local:5432/<db>
+# Short form works because the payment-service and postgres-service are in the
+# same namespace — no cross-namespace lookup required.
+db_url: "jdbc:postgresql://postgres-service:5432/paymentdb"
+postgres_db: paymentdb
+
+# Credentials — MUST be overridden via Vault or environment variables.
+db_user: PLACEHOLDER_DB_USER
+db_password: PLACEHOLDER_DB_PASSWORD
+
+# ── Secret labels and annotations ─────────────────────────────────────────────
+secret_labels:
+  app.kubernetes.io/managed-by: ansible
+  app.kubernetes.io/part-of: payment-app
+  app.kubernetes.io/component: secret
+
+secret_annotations:
+  app.kubernetes.io/description: "PostgreSQL credentials for payment-service"
+
+# ── ConfigMap application settings ───────────────────────────────────────────
+app_port: "8080"
+app_log_level: INFO
+cache_ttl_minutes: "5"
+cache_max_size: "1000"
+actuator_endpoints: "health,prometheus,info,metrics"
+health_show_details: when-authorized
+prometheus_metrics_enabled: "true"
+jpa_show_sql: "false"
+jpa_ddl_auto: validate
+
+configmap_labels:
+  app.kubernetes.io/managed-by: ansible
+  app.kubernetes.io/part-of: payment-app
+  app.kubernetes.io/component: config
+
+configmap_annotations:
+  app.kubernetes.io/description: "Application configuration for payment-service"
+
+# ── Wait-for-postgres timing ──────────────────────────────────────────────────
+# How long (seconds) to wait for the postgres pod to become Ready before aborting.
+postgres_ready_timeout: 300
+# How often (seconds) to poll the pod readiness condition.
+postgres_ready_poll_interval: 10
+# Number of consecutive successful readiness checks required before proceeding.
+postgres_ready_retries: 30
+
+# ── Pre-flight health check ───────────────────────────────────────────────────
+# The health check pings the actuator endpoint of a running payment-service pod.
+# If no payment-service is deployed yet (first run), the check is skipped.
+preflight_health_check_skip_if_no_pods: true
+preflight_health_endpoint: "/actuator/health"
+preflight_health_port: 8080
+# Number of retries for the health check HTTP call.
+preflight_health_retries: 5
+preflight_health_delay: 10
+
+# ── RBAC verification — expected Role rules ───────────────────────────────────
+# Used by the serviceaccount verification task to assert the Role grants
+# exactly the permissions provisioned by Terraform — no more, no less.
+expected_role_name: payment-app-role
+expected_role_rules:
+  - verbs: ["get"]
+    resources: ["secrets"]
+    resource_names: ["postgres-credentials"]
+  - verbs: ["get", "watch"]
+    resources: ["configmaps"]
+    resource_names: ["payment-app-config"]

@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Payment Demo</title>
+  <!-- React 18 via CDN — no build step needed -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <!-- Babel for in-browser JSX transform -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 14px;
+      line-height: 1.6;
+      background: #f3f4f6;
+      color: #1f2328;
+    }
+
+    /* ── Layout ─────────────────────────────────────────────────── */
+    .app { max-width: 900px; margin: 0 auto; padding: 24px 16px; }
+
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 28px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .header-icon {
+      width: 40px; height: 40px;
+      background: #1f2328;
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .header-icon svg { color: #fff; }
+    .header h1 { font-size: 20px; font-weight: 700; }
+    .header p  { font-size: 12px; color: #57606a; }
+
+    .grid { display: grid; grid-template-columns: 380px 1fr; gap: 20px; }
+    @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+
+    /* ── Card ───────────────────────────────────────────────────── */
+    .card {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 20px;
+    }
+    .card-title {
+      font-size: 15px; font-weight: 600;
+      margin-bottom: 16px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #f0f1f3;
+    }
+
+    /* ── Form ───────────────────────────────────────────────────── */
+    .form-row  { display: flex; gap: 12px; }
+    .form-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; flex: 1; }
+    label { font-size: 12px; font-weight: 600; color: #57606a; }
+    input, select {
+      padding: 8px 10px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 14px;
+      width: 100%;
+      outline: none;
+      transition: border-color .15s;
+    }
+    input:focus, select:focus { border-color: #3b82d4; }
+    .input-error { border-color: #dc2626 !important; }
+    .error-msg  { font-size: 11px; color: #dc2626; margin-top: 2px; }
+
+    /* ── Buttons ────────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 9px 18px;
+      border: none;
+      border-radius: 7px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity .15s;
+    }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-primary  { background: #1f2328; color: #fff; width: 100%; }
+    .btn-sm       { padding: 4px 10px; font-size: 12px; border-radius: 5px; }
+    .btn-capture  { background: #16a34a; color: #fff; }
+    .btn-refund   { background: #6b7280; color: #fff; }
+
+    /* ── Test cards ─────────────────────────────────────────────── */
+    .test-cards {
+      background: #f7f8fa;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-bottom: 18px;
+    }
+    .test-cards-title { font-size: 11px; font-weight: 700; color: #57606a; margin-bottom: 8px; text-transform: uppercase; letter-spacing: .04em; }
+    .test-card-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 0;
+      font-size: 12px;
+    }
+    .test-card-row + .test-card-row { border-top: 1px solid #e5e7eb; }
+    .card-brand { font-weight: 600; color: #1f2328; }
+    .card-num   { font-family: monospace; color: #57606a; }
+    .btn-fill   {
+      background: none; border: 1px solid #d1d5db;
+      border-radius: 4px; padding: 2px 6px;
+      font-size: 11px; cursor: pointer; color: #3b82d4; font-weight: 600;
+    }
+    .btn-fill:hover { background: #eff6ff; }
+
+    /* ── Status badges ──────────────────────────────────────────── */
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .03em;
+      text-transform: uppercase;
+    }
+    .badge-AUTHORIZED  { background: #fef9c3; color: #854d0e; }
+    .badge-CAPTURED    { background: #dcfce7; color: #15803d; }
+    .badge-DECLINED    { background: #fee2e2; color: #b91c1c; }
+    .badge-REFUNDED    { background: #f3f4f6; color: #374151; }
+
+    /* ── History table ──────────────────────────────────────────── */
+    .history-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th {
+      text-align: left;
+      padding: 7px 10px;
+      background: #f7f8fa;
+      border-bottom: 1px solid #e5e7eb;
+      font-size: 11px;
+      font-weight: 700;
+      color: #57606a;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    td { padding: 8px 10px; border-bottom: 1px solid #f0f1f3; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #f9fafb; }
+    .mono { font-family: monospace; font-size: 11px; color: #57606a; }
+
+    /* ── Alert ──────────────────────────────────────────────────── */
+    .alert {
+      padding: 10px 14px;
+      border-radius: 7px;
+      font-size: 13px;
+      margin-bottom: 14px;
+    }
+    .alert-success { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
+    .alert-error   { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
+    .alert-info    { background: #eff6ff; color: #1d4ed8; border: 1px solid #93c5fd; }
+
+    /* ── Spinner ────────────────────────────────────────────────── */
+    .spinner {
+      display: inline-block;
+      width: 16px; height: 16px;
+      border: 2px solid rgba(255,255,255,.4);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Admin bar ──────────────────────────────────────────────── */
+    .admin-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .history-meta { font-size: 12px; color: #57606a; }
+
+    .empty-state {
+      text-align: center;
+      padding: 32px 0;
+      color: #57606a;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+
+// ── Constants ───────────────────────────────────────────────────────────────
+
+const TEST_CARDS = [
+  { brand: "Visa",       number: "4263970000005262", cvv: "123", expiry: "12/26" },
+  { brand: "MasterCard", number: "5425230000004415", cvv: "456", expiry: "06/27" },
+  { brand: "Amex",       number: "374101000000608",  cvv: "7890", expiry: "09/25" },
+];
+
+const BASE = "";   // same-origin
+
+// ── Utility ─────────────────────────────────────────────────────────────────
+
+function fmt(amount, currency = "USD") {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(amount);
+}
+
+function fmtDate(iso) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleTimeString("en-US", {
+    month: "short", day: "numeric",
+    hour: "2-digit", minute: "2-digit", second: "2-digit"
+  });
+}
+
+// ── Alert component ──────────────────────────────────────────────────────────
+
+function Alert({ type, message, onClose }) {
+  if (!message) return null;
+  return (
+    <div className={`alert alert-${type}`}>
+      <span>{message}</span>
+    </div>
+  );
+}
+
+// ── Status Badge ─────────────────────────────────────────────────────────────
+
+function StatusBadge({ status }) {
+  return <span className={`badge badge-${status}`}>{status}</span>;
+}
+
+// ── Payment Form ─────────────────────────────────────────────────────────────
+
+function PaymentForm({ onNewTransaction }) {
+  const [form, setForm]       = useState({ cardNumber: "", expiryDate: "", cvv: "", amount: "", currency: "USD" });
+  const [errors, setErrors]   = useState({});
+  const [loading, setLoading] = useState(false);
+  const [alert, setAlert]     = useState(null);
+
+  function set(field, value) {
+    setForm(f => ({ ...f, [field]: value }));
+    setErrors(e => ({ ...e, [field]: null }));
+  }
+
+  function fillCard(card) {
+    setForm(f => ({ ...f, cardNumber: card.number, expiryDate: card.expiry, cvv: card.cvv }));
+    setErrors({});
+  }
+
+  function validate() {
+    const errs = {};
+    if (!form.cardNumber.trim())     errs.cardNumber  = "Required";
+    if (!/^\d{13,19}$/.test(form.cardNumber.replace(/\s/g, "")))
+                                     errs.cardNumber  = "Invalid card number";
+    if (!form.expiryDate.trim())     errs.expiryDate  = "Required";
+    if (!/^(0[1-9]|1[0-2])\/\d{2}$/.test(form.expiryDate))
+                                     errs.expiryDate  = "Use MM/YY";
+    if (!form.cvv.trim())            errs.cvv         = "Required";
+    if (!/^\d{3,4}$/.test(form.cvv)) errs.cvv         = "3 or 4 digits";
+    if (!form.amount)                errs.amount      = "Required";
+    if (isNaN(form.amount) || parseFloat(form.amount) <= 0)
+                                     errs.amount      = "Must be > 0";
+    return errs;
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    const errs = validate();
+    if (Object.keys(errs).length) { setErrors(errs); return; }
+
+    setLoading(true);
+    setAlert(null);
+
+    try {
+      const res = await fetch(`${BASE}/api/payments/authorize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cardNumber: form.cardNumber.replace(/\s/g, ""),
+          expiryDate: form.expiryDate,
+          cvv:        form.cvv,
+          amount:     parseFloat(form.amount),
+          currency:   form.currency,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Server error");
+
+      if (data.status === "DECLINED") {
+        setAlert({ type: "error", message: `Declined — ${data.responseCode}: ${data.responseMessage}` });
+      } else {
+        setAlert({ type: "success", message: `Authorized ✓  Transaction ID: ${data.transactionId}` });
+      }
+      onNewTransaction(data);
+    } catch (err) {
+      setAlert({ type: "error", message: err.message });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <div className="card-title">New Payment</div>
+
+      {/* Test card shortcuts */}
+      <div className="test-cards">
+        <div className="test-cards-title">Test Cards</div>
+        {TEST_CARDS.map(c => (
+          <div key={c.number} className="test-card-row">
+            <span className="card-brand">{c.brand}</span>
+            <span className="card-num">{c.number}</span>
+            <button className="btn-fill" onClick={() => fillCard(c)}>Fill</button>
+          </div>
+        ))}
+      </div>
+
+      {alert && <Alert type={alert.type} message={alert.message} />}
+
+      <form onSubmit={handleSubmit} noValidate>
+        <div className="form-group">
+          <label htmlFor="cardNumber">Card Number</label>
+          <input
+            id="cardNumber"
+            type="text"
+            placeholder="0000 0000 0000 0000"
+            value={form.cardNumber}
+            maxLength={19}
+            onChange={e => set("cardNumber", e.target.value)}
+            className={errors.cardNumber ? "input-error" : ""}
+          />
+          {errors.cardNumber && <span className="error-msg">{errors.cardNumber}</span>}
+        </div>
+
+        <div className="form-row">
+          <div className="form-group">
+            <label htmlFor="expiryDate">Expiry (MM/YY)</label>
+            <input
+              id="expiryDate"
+              type="text"
+              placeholder="MM/YY"
+              maxLength={5}
+              value={form.expiryDate}
+              onChange={e => set("expiryDate", e.target.value)}
+              className={errors.expiryDate ? "input-error" : ""}
+            />
+            {errors.expiryDate && <span className="error-msg">{errors.expiryDate}</span>}
+          </div>
+          <div className="form-group">
+            <label htmlFor="cvv">CVV</label>
+            <input
+              id="cvv"
+              type="text"
+              placeholder="123"
+              maxLength={4}
+              value={form.cvv}
+              onChange={e => set("cvv", e.target.value)}
+              className={errors.cvv ? "input-error" : ""}
+            />
+            {errors.cvv && <span className="error-msg">{errors.cvv}</span>}
+          </div>
+        </div>
+
+        <div className="form-row">
+          <div className="form-group" style={{ flex: 2 }}>
+            <label htmlFor="amount">Amount</label>
+            <input
+              id="amount"
+              type="number"
+              placeholder="0.00"
+              min="0.01"
+              step="0.01"
+              value={form.amount}
+              onChange={e => set("amount", e.target.value)}
+              className={errors.amount ? "input-error" : ""}
+            />
+            {errors.amount && <span className="error-msg">{errors.amount}</span>}
+          </div>
+          <div className="form-group" style={{ flex: 1 }}>
+            <label htmlFor="currency">Currency</label>
+            <select id="currency" value={form.currency} onChange={e => set("currency", e.target.value)}>
+              <option value="USD">USD</option>
+              <option value="EUR">EUR</option>
+              <option value="GBP">GBP</option>
+              <option value="CAD">CAD</option>
+            </select>
+          </div>
+        </div>
+
+        <button type="submit" className="btn btn-primary" disabled={loading}>
+          {loading ? <><span className="spinner" />&nbsp;Processing…</> : "Authorize Payment"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+// ── Transaction Row ───────────────────────────────────────────────────────────
+
+function TransactionRow({ tx, onUpdate }) {
+  const [loading, setLoading] = useState(null); // "capture" | "refund"
+
+  async function doAction(action) {
+    setLoading(action);
+    try {
+      const res = await fetch(`${BASE}/api/payments/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transactionId: tx.transactionId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Error");
+      onUpdate(data);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  return (
+    <tr>
+      <td className="mono">{tx.transactionId.substring(0, 8)}…</td>
+      <td>{tx.maskedCardNumber}</td>
+      <td>{tx.cardType}</td>
+      <td style={{ textAlign: "right" }}>{fmt(tx.amount, tx.currency)}</td>
+      <td><StatusBadge status={tx.status} /></td>
+      <td className="mono">{tx.responseCode}</td>
+      <td className="mono">{fmtDate(tx.createdAt)}</td>
+      <td>
+        {tx.status === "AUTHORIZED" && (
+          <button
+            className="btn btn-sm btn-capture"
+            disabled={loading === "capture"}
+            onClick={() => doAction("capture")}
+          >
+            {loading === "capture" ? "…" : "Capture"}
+          </button>
+        )}
+        {tx.status === "CAPTURED" && (
+          <button
+            className="btn btn-sm btn-refund"
+            disabled={loading === "refund"}
+            onClick={() => doAction("refund")}
+          >
+            {loading === "refund" ? "…" : "Refund"}
+          </button>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+// ── History Panel ─────────────────────────────────────────────────────────────
+
+function HistoryPanel({ transactions, onUpdate, onRefresh, onCacheClear }) {
+  const [clearing, setClearing] = useState(false);
+
+  async function clearCache() {
+    setClearing(true);
+    try {
+      await fetch(`${BASE}/admin/cache/clear`, { method: "POST" });
+      onCacheClear();
+    } finally {
+      setClearing(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <div className="admin-bar">
+        <div className="card-title" style={{ marginBottom: 0, paddingBottom: 0, borderBottom: "none" }}>
+          Transaction History
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn btn-sm" style={{ background: "#eff6ff", color: "#1d4ed8", border: "1px solid #93c5fd" }}
+            onClick={onRefresh}>↻ Refresh</button>
+          <button className="btn btn-sm" style={{ background: "#f7f8fa", color: "#57606a", border: "1px solid #d1d5db" }}
+            onClick={clearCache} disabled={clearing}>
+            {clearing ? "…" : "Clear Cache"}
+          </button>
+        </div>
+      </div>
+
+      <div style={{ marginBottom: 12, marginTop: 12, borderBottom: "1px solid #f0f1f3" }} />
+
+      {transactions.length === 0 ? (
+        <div className="empty-state">No transactions yet. Authorize a payment to get started.</div>
+      ) : (
+        <div className="history-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Card</th>
+                <th>Type</th>
+                <th style={{ textAlign: "right" }}>Amount</th>
+                <th>Status</th>
+                <th>Code</th>
+                <th>Time</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {transactions.map(tx => (
+                <TransactionRow key={tx.transactionId} tx={tx} onUpdate={onUpdate} />
+              ))}
+            </tbody>
+          </table>
+          <div className="history-meta" style={{ marginTop: 8 }}>
+            Showing {transactions.length} most recent transaction{transactions.length !== 1 ? "s" : ""}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── App ───────────────────────────────────────────────────────────────────────
+
+function App() {
+  const [transactions, setTransactions] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(true);
+  const [histAlert, setHistAlert] = useState(null);
+
+  const fetchHistory = useCallback(async () => {
+    setLoadingHistory(true);
+    try {
+      const res = await fetch(`${BASE}/api/payments/history`);
+      const data = await res.json();
+      setTransactions(data);
+    } catch {
+      // silently ignore on initial load
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchHistory(); }, [fetchHistory]);
+
+  function handleNewTransaction(tx) {
+    // Prepend to local list
+    setTransactions(prev => {
+      const filtered = prev.filter(t => t.transactionId !== tx.transactionId);
+      return [tx, ...filtered].slice(0, 20);
+    });
+  }
+
+  function handleUpdate(tx) {
+    setTransactions(prev =>
+      prev.map(t => t.transactionId === tx.transactionId ? tx : t)
+    );
+  }
+
+  function handleCacheClear() {
+    setHistAlert({ type: "info", message: "Cache cleared." });
+    setTimeout(() => setHistAlert(null), 3000);
+  }
+
+  return (
+    <div className="app">
+      {/* Header */}
+      <div className="header">
+        <div className="header-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
+            <line x1="1" y1="10" x2="23" y2="10"/>
+          </svg>
+        </div>
+        <div>
+          <h1>Payment Processing Demo</h1>
+          <p>Mock gateway · H2 in-memory · Caffeine cache · ~10 % random decline rate</p>
+        </div>
+      </div>
+
+      {histAlert && (
+        <div style={{ marginBottom: 16 }}>
+          <Alert type={histAlert.type} message={histAlert.message} />
+        </div>
+      )}
+
+      <div className="grid">
+        <PaymentForm onNewTransaction={handleNewTransaction} />
+        {loadingHistory
+          ? <div className="card empty-state">Loading history…</div>
+          : <HistoryPanel
+              transactions={transactions}
+              onUpdate={handleUpdate}
+              onRefresh={fetchHistory}
+              onCacheClear={handleCacheClear}
+            />
+        }
+      </div>
+    </div>
+  );
+}
+
+// ── Mount ─────────────────────────────────────────────────────────────────────
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
+</body>
+</html>

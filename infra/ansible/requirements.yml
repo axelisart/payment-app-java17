@@ -1,0 +1,15 @@
+---
+# ──────────────────────────────────────────────────────────────────────────────
+# requirements.yml
+#
+# Ansible collection dependencies for the payment-app playbook.
+#
+# Install with:
+#   ansible-galaxy collection install -r requirements.yml
+#
+# kubernetes.core provides all k8s_*, k8s_info, and k8s_exec modules used by
+# every task file in the payment-app role.
+# ──────────────────────────────────────────────────────────────────────────────
+collections:
+  - name: kubernetes.core
+    version: ">=3.0.0"

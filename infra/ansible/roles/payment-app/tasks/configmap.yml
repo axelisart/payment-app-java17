@@ -1,0 +1,36 @@
+---
+# ──────────────────────────────────────────────────────────────────────────────
+# roles/payment-app/tasks/configmap.yml
+#
+# Creates (or idempotently updates) the payment-app-config ConfigMap in the
+# target namespace.
+#
+# This ConfigMap supplies non-secret runtime configuration to the payment-service
+# pods. It is mounted as environment variables via envFrom in the Deployment
+# (provisioned by the CD pipeline, not Ansible).
+#
+# Keys map to Spring Boot property names via environment variable binding:
+#   SERVER_PORT                            → server.port
+#   LOGGING_LEVEL_COM_DEMO_PAYMENT        → logging.level.com.demo.payment
+#   SPRING_CACHE_CAFFEINE_SPEC            → spring.cache.caffeine.spec
+#   MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE → management.endpoints.web.exposure.include
+#   MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS   → management.endpoint.health.show-details
+#   MANAGEMENT_PROMETHEUS_METRICS_EXPORT_ENABLED → management.prometheus.metrics.export.enabled
+#   SPRING_JPA_SHOW_SQL                   → spring.jpa.show-sql
+#   SPRING_JPA_HIBERNATE_DDL_AUTO         → spring.jpa.hibernate.ddl-auto
+# ──────────────────────────────────────────────────────────────────────────────
+
+- name: "{{ namespace }} | configmap | Apply payment-app-config ConfigMap"
+  kubernetes.core.k8s:
+    state: present
+    namespace: "{{ namespace }}"
+    resource_definition: "{{ lookup('template', 'payment-app-config.yml.j2') | from_yaml }}"
+    apply: true
+    force: false
+  register: configmap_result
+
+- name: "{{ namespace }} | configmap | Report outcome"
+  ansible.builtin.debug:
+    msg: >-
+      ConfigMap '{{ configmap_name }}' in namespace '{{ namespace }}':
+      {{ 'created' if configmap_result.changed else 'already up to date' }}
