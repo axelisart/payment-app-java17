@@ -14,7 +14,7 @@
 #   NAMESPACE_PROD      — bob-demo-prod
 # ──────────────────────────────────────────────────────────────────────────────
 
-name: CI/CD — payment-app
+name: CI/CD payment-app
 
 on:
   push:
@@ -97,7 +97,6 @@ jobs:
 
     environment:
       name: staging
-      url: https://payment-app-${{ secrets.NAMESPACE_STAGING }}.apps.${{ secrets.OPENSHIFT_SERVER }}
 
     steps:
       - name: Checkout
@@ -154,7 +153,6 @@ jobs:
     # with at least one required reviewer — this creates the manual approval gate.
     environment:
       name: production
-      url: https://payment-app-${{ secrets.NAMESPACE_PROD }}.apps.${{ secrets.OPENSHIFT_SERVER }}
 
     steps:
       - name: Checkout
