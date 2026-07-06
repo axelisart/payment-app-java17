@@ -20,17 +20,17 @@
 #   ansible-playbook playbook.yml --tags verify           # RBAC assertions only
 # ──────────────────────────────────────────────────────────────────────────────
 
-- name: "{{ namespace }} | Display environment banner"
+- name: "{{ k8s_namespace }} | Display environment banner"
   ansible.builtin.debug:
     msg: |
       ══════════════════════════════════════════════════════════════
-       Configuring namespace: {{ namespace }}  ({{ env_label }})
+       Configuring namespace: {{ k8s_namespace }}  ({{ env_label }})
       ══════════════════════════════════════════════════════════════
 
 # ── Stage 1: Verify Terraform-provisioned RBAC ────────────────────────────────
 # Read-only assertions — Ansible never mutates the ServiceAccount or Role.
 # Failure here means Terraform did not complete successfully.
-- name: "{{ namespace }} | Verify ServiceAccount and RBAC"
+- name: "{{ k8s_namespace }} | Verify ServiceAccount and RBAC"
   ansible.builtin.include_tasks:
     file: serviceaccount.yml
     apply:
@@ -41,7 +41,7 @@
 # This is the blocking gate described in IaCArchitecture.md:
 #   "wait_for postgres-service port 5432 ready"
 # All subsequent tasks depend on an available DB.
-- name: "{{ namespace }} | Wait for PostgreSQL readiness"
+- name: "{{ k8s_namespace }} | Wait for PostgreSQL readiness"
   ansible.builtin.include_tasks:
     file: wait_postgres.yml
     apply:
@@ -49,7 +49,7 @@
   tags: [wait, postgres]
 
 # ── Stage 3: Apply postgres-credentials Secret ────────────────────────────────
-- name: "{{ namespace }} | Apply postgres-credentials Secret"
+- name: "{{ k8s_namespace }} | Apply postgres-credentials Secret"
   ansible.builtin.include_tasks:
     file: secret.yml
     apply:
@@ -57,7 +57,7 @@
   tags: [secret, credentials]
 
 # ── Stage 4: Apply payment-app-config ConfigMap ───────────────────────────────
-- name: "{{ namespace }} | Apply payment-app-config ConfigMap"
+- name: "{{ k8s_namespace }} | Apply payment-app-config ConfigMap"
   ansible.builtin.include_tasks:
     file: configmap.yml
     apply:
@@ -67,7 +67,7 @@
 # ── Stage 5: Pre-flight health check ─────────────────────────────────────────
 # Final gate before signalling the CD pipeline that this namespace is ready.
 # Asserts namespace state, all K8s resources, and (if pods exist) actuator UP.
-- name: "{{ namespace }} | Run pre-flight health check"
+- name: "{{ k8s_namespace }} | Run pre-flight health check"
   ansible.builtin.include_tasks:
     file: preflight.yml
     apply:

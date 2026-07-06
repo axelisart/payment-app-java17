@@ -25,57 +25,57 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 # ── 1. Namespace Active ───────────────────────────────────────────────────────
-- name: "{{ namespace }} | preflight | Fetch Namespace info"
+- name: "{{ k8s_namespace }} | preflight | Fetch Namespace info"
   kubernetes.core.k8s_info:
     api_version: v1
     kind: Namespace
-    name: "{{ namespace }}"
+    name: "{{ k8s_namespace }}"
   register: ns_info
 
-- name: "{{ namespace }} | preflight | Assert Namespace is Active"
+- name: "{{ k8s_namespace }} | preflight | Assert Namespace is Active"
   ansible.builtin.assert:
     that:
       - ns_info.resources | length == 1
       - ns_info.resources[0].status.phase == 'Active'
     fail_msg: >-
-      Namespace '{{ namespace }}' is not Active (phase:
+      Namespace '{{ k8s_namespace }}' is not Active (phase:
       {{ ns_info.resources[0].status.phase | default('NOT FOUND') }}).
       Run `terraform apply` and wait for the namespace to become Active.
-    success_msg: "Namespace '{{ namespace }}' is Active ✔"
+    success_msg: "Namespace '{{ k8s_namespace }}' is Active ✔"
 
 # ── 2. ResourceQuota is present ───────────────────────────────────────────────
-- name: "{{ namespace }} | preflight | Fetch ResourceQuota"
+- name: "{{ k8s_namespace }} | preflight | Fetch ResourceQuota"
   kubernetes.core.k8s_info:
     api_version: v1
     kind: ResourceQuota
     name: payment-app-quota
-    namespace: "{{ namespace }}"
+    namespace: "{{ k8s_namespace }}"
   register: rq_info
 
-- name: "{{ namespace }} | preflight | Assert ResourceQuota exists"
+- name: "{{ k8s_namespace }} | preflight | Assert ResourceQuota exists"
   ansible.builtin.assert:
     that:
       - rq_info.resources | length == 1
     fail_msg: >-
-      ResourceQuota 'payment-app-quota' not found in '{{ namespace }}'.
+      ResourceQuota 'payment-app-quota' not found in '{{ k8s_namespace }}'.
       Run `terraform apply` to provision it.
     success_msg: >-
       ResourceQuota present — hard limits:
       {{ rq_info.resources[0].spec.hard | to_nice_json }} ✔
 
 # ── 3. Expected NetworkPolicies are present ────────────────────────────────────
-- name: "{{ namespace }} | preflight | Fetch all NetworkPolicies in namespace"
+- name: "{{ k8s_namespace }} | preflight | Fetch all NetworkPolicies in namespace"
   kubernetes.core.k8s_info:
     api_version: networking.k8s.io/v1
     kind: NetworkPolicy
-    namespace: "{{ namespace }}"
+    namespace: "{{ k8s_namespace }}"
   register: np_info
 
-- name: "{{ namespace }} | preflight | Set NetworkPolicy name list fact"
+- name: "{{ k8s_namespace }} | preflight | Set NetworkPolicy name list fact"
   ansible.builtin.set_fact:
     present_netpols: "{{ np_info.resources | map(attribute='metadata.name') | list }}"
 
-- name: "{{ namespace }} | preflight | Assert all required NetworkPolicies exist"
+- name: "{{ k8s_namespace }} | preflight | Assert all required NetworkPolicies exist"
   ansible.builtin.assert:
     that:
       - "'default-deny-all' in present_netpols"
@@ -83,7 +83,7 @@
       - "'allow-payment-to-postgres' in present_netpols"
       - "'allow-payment-egress-to-postgres' in present_netpols"
     fail_msg: >-
-      One or more required NetworkPolicies are missing in '{{ namespace }}'.
+      One or more required NetworkPolicies are missing in '{{ k8s_namespace }}'.
       Present: {{ present_netpols }}.
       Expected: default-deny-all, allow-payment-ingress,
                 allow-payment-to-postgres, allow-payment-egress-to-postgres.
@@ -91,15 +91,15 @@
     success_msg: "All 4 NetworkPolicies are present ✔"
 
 # ── 4. postgres-service has ready endpoints ───────────────────────────────────
-- name: "{{ namespace }} | preflight | Fetch postgres-service Endpoints"
+- name: "{{ k8s_namespace }} | preflight | Fetch postgres-service Endpoints"
   kubernetes.core.k8s_info:
     api_version: v1
     kind: Endpoints
     name: "{{ postgres_service_name }}"
-    namespace: "{{ namespace }}"
+    namespace: "{{ k8s_namespace }}"
   register: pg_ep_info
 
-- name: "{{ namespace }} | preflight | Assert postgres-service has ready endpoints"
+- name: "{{ k8s_namespace }} | preflight | Assert postgres-service has ready endpoints"
   ansible.builtin.assert:
     that:
       - pg_ep_info.resources | length == 1
@@ -107,21 +107,21 @@
       - pg_ep_info.resources[0].subsets | length > 0
       - pg_ep_info.resources[0].subsets[0].addresses | length > 0
     fail_msg: >-
-      '{{ postgres_service_name }}' in '{{ namespace }}' has no ready endpoints.
+      '{{ postgres_service_name }}' in '{{ k8s_namespace }}' has no ready endpoints.
       Ensure the postgres pod is Running and labelled app=postgres.
     success_msg: "'{{ postgres_service_name }}' has {{ pg_ep_info.resources[0].subsets[0].addresses | length }} ready endpoint(s) ✔"
 
 # ── 5. postgres-credentials Secret exists ────────────────────────────────────
-- name: "{{ namespace }} | preflight | Assert postgres-credentials Secret exists"
+- name: "{{ k8s_namespace }} | preflight | Assert postgres-credentials Secret exists"
   kubernetes.core.k8s_info:
     api_version: v1
     kind: Secret
     name: "{{ postgres_secret_name }}"
-    namespace: "{{ namespace }}"
+    namespace: "{{ k8s_namespace }}"
   register: secret_check
   no_log: true    # do not log Secret metadata (prevents key enumeration)
 
-- name: "{{ namespace }} | preflight | Assert Secret was found"
+- name: "{{ k8s_namespace }} | preflight | Assert Secret was found"
   ansible.builtin.assert:
     that:
       - secret_check.resources | length == 1
@@ -129,22 +129,22 @@
       - "'DB_USER' in (secret_check.resources[0].data | default({}))"
       - "'DB_PASSWORD' in (secret_check.resources[0].data | default({}))"
     fail_msg: >-
-      Secret '{{ postgres_secret_name }}' in '{{ namespace }}' is missing or
+      Secret '{{ postgres_secret_name }}' in '{{ k8s_namespace }}' is missing or
       does not contain the required keys (DB_URL, DB_USER, DB_PASSWORD).
       Re-run the secret task: ansible-playbook playbook.yml --tags secret
     success_msg: "Secret '{{ postgres_secret_name }}' exists with all required keys ✔"
   no_log: true
 
 # ── 6. payment-app-config ConfigMap exists and has required keys ──────────────
-- name: "{{ namespace }} | preflight | Fetch payment-app-config ConfigMap"
+- name: "{{ k8s_namespace }} | preflight | Fetch payment-app-config ConfigMap"
   kubernetes.core.k8s_info:
     api_version: v1
     kind: ConfigMap
     name: "{{ configmap_name }}"
-    namespace: "{{ namespace }}"
+    namespace: "{{ k8s_namespace }}"
   register: cm_check
 
-- name: "{{ namespace }} | preflight | Assert ConfigMap has required keys"
+- name: "{{ k8s_namespace }} | preflight | Assert ConfigMap has required keys"
   ansible.builtin.assert:
     that:
       - cm_check.resources | length == 1
@@ -154,82 +154,85 @@
         | difference(cm_check.resources[0].data.keys() | list)
         | length == 0
     fail_msg: >-
-      ConfigMap '{{ configmap_name }}' in '{{ namespace }}' is missing or
+      ConfigMap '{{ configmap_name }}' in '{{ k8s_namespace }}' is missing or
       incomplete. Re-run: ansible-playbook playbook.yml --tags configmap
     success_msg: "ConfigMap '{{ configmap_name }}' has all required keys ✔"
 
 # ── 7. payment-service actuator health (skip if no pods yet) ──────────────────
-- name: "{{ namespace }} | preflight | Check for existing payment-service pods"
+- name: "{{ k8s_namespace }} | preflight | Check for existing payment-service pods"
   kubernetes.core.k8s_info:
     api_version: v1
     kind: Pod
-    namespace: "{{ namespace }}"
+    namespace: "{{ k8s_namespace }}"
     label_selectors:
       - "app=payment-app"
     field_selectors:
       - "status.phase=Running"
   register: payment_pods
 
-- name: "{{ namespace }} | preflight | Skip health check (no payment-service pods yet)"
+- name: "{{ k8s_namespace }} | preflight | Skip health check (no payment-service pods yet)"
   ansible.builtin.debug:
     msg: >-
-      No Running payment-service pods found in '{{ namespace }}'.
+      No Running payment-service pods found in '{{ k8s_namespace }}'.
       This is expected on first deploy — skipping /actuator/health check.
       The health gate will be enforced by the CD pipeline after the first deploy.
   when: payment_pods.resources | length == 0
 
-- name: "{{ namespace }} | preflight | Run /actuator/health via pod exec"
+- name: "{{ k8s_namespace }} | preflight | Run /actuator/health via pod exec"
   when: payment_pods.resources | length > 0
   block:
-    - name: "{{ namespace }} | preflight | Set payment pod name fact"
+    - name: "{{ k8s_namespace }} | preflight | Set payment pod name fact"
       ansible.builtin.set_fact:
         payment_pod_name: "{{ payment_pods.resources[0].metadata.name }}"
 
-    - name: "{{ namespace }} | preflight | HTTP GET /actuator/health inside pod"
-      kubernetes.core.k8s_exec:
-        namespace: "{{ namespace }}"
-        pod: "{{ payment_pod_name }}"
-        command:
+    - name: "{{ k8s_namespace }} | preflight | HTTP GET /actuator/health inside pod"
+      ansible.builtin.command:
+        argv:
+          - oc
+          - exec
+          - "{{ payment_pod_name }}"
+          - -n
+          - "{{ k8s_namespace }}"
+          - --
           - sh
           - -c
-          - >-
-            curl -sf --max-time 10
-            http://localhost:{{ preflight_health_port }}{{ preflight_health_endpoint }}
+          - "curl -sf --max-time 10 http://localhost:{{ preflight_health_port }}{{ preflight_health_endpoint }}"
       register: health_response
       retries: "{{ preflight_health_retries }}"
       delay: "{{ preflight_health_delay }}"
-      until: health_response.return_code == 0
+      until: health_response.rc == 0
+      changed_when: false
       ignore_errors: true    # failure is reported via assert below, not as a fatal error
 
-    - name: "{{ namespace }} | preflight | Assert health response contains status UP"
+    - name: "{{ k8s_namespace }} | preflight | Assert health response contains status UP"
       ansible.builtin.assert:
         that:
-          - health_response.return_code == 0
+          - health_response.rc == 0
           - "'UP' in health_response.stdout"
         fail_msg: >-
           /actuator/health in pod '{{ payment_pod_name }}' did not return UP.
           Response: {{ health_response.stdout | default('(no response)') }}
-          Inspect logs: oc logs {{ payment_pod_name }} -n {{ namespace }}
+          Inspect logs: oc logs {{ payment_pod_name }} -n {{ k8s_namespace }}
         success_msg: >-
-          payment-service /actuator/health = UP in namespace '{{ namespace }}' ✔
+          payment-service /actuator/health = UP in namespace '{{ k8s_namespace }}' ✔
 
-    - name: "{{ namespace }} | preflight | Show health response"
+    - name: "{{ k8s_namespace }} | preflight | Show health response"
       ansible.builtin.debug:
         msg: "{{ health_response.stdout | from_json | to_nice_json }}"
       when: health_response.stdout is defined and health_response.stdout | length > 0
 
 # ── Final summary ─────────────────────────────────────────────────────────────
-- name: "{{ namespace }} | preflight | Set preflight_passed fact"
+- name: "{{ k8s_namespace }} | preflight | Set preflight_passed fact"
   ansible.builtin.set_fact:
     preflight_passed: true
 
-- name: "{{ namespace }} | preflight | ✔ Namespace is ready for deployment"
+- name: "{{ k8s_namespace }} | preflight | ✔ Namespace is ready for deployment"
   ansible.builtin.debug:
     msg: |
       ══════════════════════════════════════════════════════════════
-       PRE-FLIGHT PASSED — {{ namespace }}
+       PRE-FLIGHT PASSED — {{ k8s_namespace }}
       ══════════════════════════════════════════════════════════════
-       Namespace    : {{ namespace }} (Active)
+       Namespace    : {{ k8s_namespace }} (Active)
        ResourceQuota: present ✔
        NetworkPolicy: 4/4 required policies present ✔
        postgres-svc : ready endpoints ✔

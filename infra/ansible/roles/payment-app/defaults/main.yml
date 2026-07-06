@@ -13,7 +13,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 # ── Namespace (overridden per inventory group in hosts.yml) ───────────────────
-namespace: bob-demo-staging
+k8s_namespace: bob-demo-staging
 
 # ── Environment label (staging | prod) ───────────────────────────────────────
 env_label: staging

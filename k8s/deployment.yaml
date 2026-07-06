@@ -42,11 +42,13 @@ items:
           prometheus.io/path:   "/actuator/prometheus"
           prometheus.io/port:   "8080"
       spec:
-        # Drop all Linux capabilities; run as non-root
+        # Drop all Linux capabilities; run as non-root.
+        # runAsUser / fsGroup are intentionally omitted: on OpenShift/ROKS each
+        # namespace has an assigned UID range and the SCC (restricted-v2) rejects
+        # any hardcoded UID outside that range. Omitting these fields lets
+        # OpenShift inject a valid UID automatically.
         securityContext:
           runAsNonRoot: true
-          runAsUser: 65532
-          fsGroup:   65532
         containers:
         - name: payment-app
           image: image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/payment-app:${IMAGE_TAG}

@@ -24,7 +24,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ configmap_name }}
-  namespace: {{ namespace }}
+  namespace: {{ k8s_namespace }}
   labels:
     app.kubernetes.io/managed-by: ansible
     app.kubernetes.io/part-of: payment-app
@@ -84,4 +84,4 @@ data:
 
   # ── Environment label (for logging and observability) ──────────────────────
   APP_ENVIRONMENT: "{{ env_label }}"
-  APP_NAMESPACE: "{{ namespace }}"
+  APP_NAMESPACE: "{{ k8s_namespace }}"

@@ -20,17 +20,17 @@
 #   SPRING_JPA_HIBERNATE_DDL_AUTO         → spring.jpa.hibernate.ddl-auto
 # ──────────────────────────────────────────────────────────────────────────────
 
-- name: "{{ namespace }} | configmap | Apply payment-app-config ConfigMap"
+- name: "{{ k8s_namespace }} | configmap | Apply payment-app-config ConfigMap"
   kubernetes.core.k8s:
     state: present
-    namespace: "{{ namespace }}"
+    namespace: "{{ k8s_namespace }}"
     resource_definition: "{{ lookup('template', 'payment-app-config.yml.j2') | from_yaml }}"
     apply: true
     force: false
   register: configmap_result
 
-- name: "{{ namespace }} | configmap | Report outcome"
+- name: "{{ k8s_namespace }} | configmap | Report outcome"
   ansible.builtin.debug:
     msg: >-
-      ConfigMap '{{ configmap_name }}' in namespace '{{ namespace }}':
+      ConfigMap '{{ configmap_name }}' in namespace '{{ k8s_namespace }}':
       {{ 'created' if configmap_result.changed else 'already up to date' }}

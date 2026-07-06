@@ -22,29 +22,29 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 # ── Step 1: Assert Deployment exists before polling ───────────────────────────
-- name: "{{ namespace }} | postgres | Assert postgres Deployment exists"
+- name: "{{ k8s_namespace }} | postgres | Assert postgres Deployment exists"
   kubernetes.core.k8s_info:
     api_version: apps/v1
     kind: Deployment
     name: "{{ postgres_deployment_name }}"
-    namespace: "{{ namespace }}"
+    namespace: "{{ k8s_namespace }}"
   register: pg_deployment_info
 
-- name: "{{ namespace }} | postgres | Fail if postgres Deployment is absent"
+- name: "{{ k8s_namespace }} | postgres | Fail if postgres Deployment is absent"
   ansible.builtin.fail:
     msg: >-
       PostgreSQL Deployment '{{ postgres_deployment_name }}' not found in
-      namespace '{{ namespace }}'. Ensure `terraform apply` completed successfully
+      namespace '{{ k8s_namespace }}'. Ensure `terraform apply` completed successfully
       before running this playbook.
   when: pg_deployment_info.resources | length == 0
 
 # ── Step 2: Wait for the Deployment to reach its desired replica count ─────────
-- name: "{{ namespace }} | postgres | Wait for Deployment to reach desired replicas"
+- name: "{{ k8s_namespace }} | postgres | Wait for Deployment to reach desired replicas"
   kubernetes.core.k8s_info:
     api_version: apps/v1
     kind: Deployment
     name: "{{ postgres_deployment_name }}"
-    namespace: "{{ namespace }}"
+    namespace: "{{ k8s_namespace }}"
     wait: true
     wait_condition:
       type: Available
@@ -52,7 +52,7 @@
     wait_timeout: "{{ postgres_ready_timeout }}"
   register: pg_deployment_ready
 
-- name: "{{ namespace }} | postgres | Confirm Deployment is Available"
+- name: "{{ k8s_namespace }} | postgres | Confirm Deployment is Available"
   ansible.builtin.assert:
     that:
       - pg_deployment_ready.resources | length == 1
@@ -61,16 +61,16 @@
         and pg_deployment_ready.resources[0].status.readyReplicas >= 1
     fail_msg: >-
       PostgreSQL Deployment '{{ postgres_deployment_name }}' in namespace
-      '{{ namespace }}' did not become available within {{ postgres_ready_timeout }}
-      seconds. Check pod events: oc describe deployment/postgres -n {{ namespace }}
+      '{{ k8s_namespace }}' did not become available within {{ postgres_ready_timeout }}
+      seconds. Check pod events: oc describe deployment/postgres -n {{ k8s_namespace }}
     success_msg: "PostgreSQL Deployment reports {{ pg_deployment_ready.resources[0].status.readyReplicas }} ready replica(s) ✔"
 
 # ── Step 3: Wait for the Pod's Ready condition ────────────────────────────────
-- name: "{{ namespace }} | postgres | Find postgres Pod name"
+- name: "{{ k8s_namespace }} | postgres | Find postgres Pod name"
   kubernetes.core.k8s_info:
     api_version: v1
     kind: Pod
-    namespace: "{{ namespace }}"
+    namespace: "{{ k8s_namespace }}"
     label_selectors:
       - "app=postgres"
     field_selectors:
@@ -80,24 +80,24 @@
   delay: "{{ postgres_ready_poll_interval }}"
   until: pg_pod_info.resources | length > 0
 
-- name: "{{ namespace }} | postgres | Fail if no Running postgres pod found"
+- name: "{{ k8s_namespace }} | postgres | Fail if no Running postgres pod found"
   ansible.builtin.fail:
     msg: >-
-      No Running postgres pod found in namespace '{{ namespace }}' after
+      No Running postgres pod found in namespace '{{ k8s_namespace }}' after
       {{ postgres_ready_retries * postgres_ready_poll_interval }}s.
-      Check: oc get pods -n {{ namespace }} -l app=postgres
+      Check: oc get pods -n {{ k8s_namespace }} -l app=postgres
   when: pg_pod_info.resources | length == 0
 
-- name: "{{ namespace }} | postgres | Set postgres pod name fact"
+- name: "{{ k8s_namespace }} | postgres | Set postgres pod name fact"
   ansible.builtin.set_fact:
     postgres_pod_name: "{{ pg_pod_info.resources[0].metadata.name }}"
 
-- name: "{{ namespace }} | postgres | Wait for postgres pod Ready condition"
+- name: "{{ k8s_namespace }} | postgres | Wait for postgres pod Ready condition"
   kubernetes.core.k8s_info:
     api_version: v1
     kind: Pod
     name: "{{ postgres_pod_name }}"
-    namespace: "{{ namespace }}"
+    namespace: "{{ k8s_namespace }}"
     wait: true
     wait_condition:
       type: Ready
@@ -105,7 +105,7 @@
     wait_timeout: "{{ postgres_ready_timeout }}"
   register: pg_pod_ready
 
-- name: "{{ namespace }} | postgres | Confirm pod is Ready"
+- name: "{{ k8s_namespace }} | postgres | Confirm pod is Ready"
   ansible.builtin.assert:
     that:
       - pg_pod_ready.resources | length == 1
@@ -117,18 +117,19 @@
         | length == 1
     fail_msg: >-
       Pod '{{ postgres_pod_name }}' did not reach Ready state.
-      Inspect: oc logs {{ postgres_pod_name }} -n {{ namespace }}
+      Inspect: oc logs {{ postgres_pod_name }} -n {{ k8s_namespace }}
     success_msg: "Pod '{{ postgres_pod_name }}' is Ready ✔"
 
-# ── Step 4: Functional check via pg_isready inside the pod ────────────────────
-# pg_isready is the standard PostgreSQL health binary — it performs a real
-# connection attempt to the postmaster and returns exit code 0 when accepting
-# connections. This is strictly stronger than the Pod Ready condition alone.
-- name: "{{ namespace }} | postgres | Run pg_isready inside postgres pod"
-  kubernetes.core.k8s_exec:
-    namespace: "{{ namespace }}"
-    pod: "{{ postgres_pod_name }}"
-    command:
+# ── Step 4: Functional check via oc exec (avoids kubernetes Python module issues)
+- name: "{{ k8s_namespace }} | postgres | Run pg_isready via oc exec"
+  ansible.builtin.command:
+    argv:
+      - oc
+      - exec
+      - "{{ postgres_pod_name }}"
+      - -n
+      - "{{ k8s_namespace }}"
+      - --
       - pg_isready
       - -U
       - "{{ db_user }}"
@@ -139,37 +140,36 @@
   register: pg_isready_result
   retries: "{{ postgres_ready_retries }}"
   delay: "{{ postgres_ready_poll_interval }}"
-  until: pg_isready_result.return_code == 0
-  no_log: false    # pg_isready output is safe to log (no credentials in output)
+  until: pg_isready_result.rc == 0
+  changed_when: false
 
-- name: "{{ namespace }} | postgres | Confirm pg_isready output"
+- name: "{{ k8s_namespace }} | postgres | Confirm pg_isready output"
   ansible.builtin.debug:
-    msg: "{{ namespace }} | postgres pg_isready: {{ pg_isready_result.stdout | trim }}"
+    msg: "{{ k8s_namespace }} | postgres pg_isready: {{ pg_isready_result.stdout | trim }}"
 
-- name: "{{ namespace }} | postgres | Assert pg_isready succeeded"
+- name: "{{ k8s_namespace }} | postgres | Assert pg_isready succeeded"
   ansible.builtin.assert:
     that:
-      - pg_isready_result.return_code == 0
+      - pg_isready_result.rc == 0
     fail_msg: >-
-      pg_isready returned non-zero exit code for pod '{{ postgres_pod_name }}'.
-      PostgreSQL is not accepting connections. Check logs:
-      oc logs {{ postgres_pod_name }} -n {{ namespace }}
-    success_msg: "PostgreSQL is accepting connections in namespace '{{ namespace }}' ✔"
+      pg_isready failed for pod '{{ postgres_pod_name }}'.
+      Check logs: oc logs {{ postgres_pod_name }} -n {{ k8s_namespace }}
+    success_msg: "PostgreSQL is accepting connections in namespace '{{ k8s_namespace }}' ✔"
 
 # ── Verify ClusterIP Service responds on port 5432 ───────────────────────────
 # Test TCP reachability of the ClusterIP service from within a postgres pod.
 # This ensures the Service selector is correct and the NetworkPolicy allows
 # the connection (even though the test is pod→localhost, it validates the
 # service endpoint registration).
-- name: "{{ namespace }} | postgres | Verify postgres-service ClusterIP endpoint registered"
+- name: "{{ k8s_namespace }} | postgres | Verify postgres-service ClusterIP endpoint registered"
   kubernetes.core.k8s_info:
     api_version: v1
     kind: Endpoints
     name: "{{ postgres_service_name }}"
-    namespace: "{{ namespace }}"
+    namespace: "{{ k8s_namespace }}"
   register: pg_endpoints
 
-- name: "{{ namespace }} | postgres | Assert postgres-service has at least one endpoint"
+- name: "{{ k8s_namespace }} | postgres | Assert postgres-service has at least one endpoint"
   ansible.builtin.assert:
     that:
       - pg_endpoints.resources | length == 1
@@ -179,7 +179,7 @@
         and pg_endpoints.resources[0].subsets[0].addresses is defined
         and pg_endpoints.resources[0].subsets[0].addresses | length > 0
     fail_msg: >-
-      Service '{{ postgres_service_name }}' in namespace '{{ namespace }}' has no
+      Service '{{ postgres_service_name }}' in namespace '{{ k8s_namespace }}' has no
       ready endpoints. The postgres pod may not have the correct 'app=postgres'
       label, or it is not yet Ready.
     success_msg: >-
@@ -187,8 +187,8 @@
       {{ pg_endpoints.resources[0].subsets[0].addresses | length }}
       ready endpoint(s) ✔"
 
-- name: "{{ namespace }} | postgres | All readiness checks passed"
+- name: "{{ k8s_namespace }} | postgres | All readiness checks passed"
   ansible.builtin.debug:
     msg: >-
-      PostgreSQL is fully ready in namespace '{{ namespace }}'.
+      PostgreSQL is fully ready in namespace '{{ k8s_namespace }}'.
       JDBC endpoint: jdbc:postgresql://{{ postgres_service_name }}:{{ postgres_service_port }}/{{ postgres_db }}
